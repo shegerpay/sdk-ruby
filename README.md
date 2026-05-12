@@ -1,3 +1,5 @@
+<p align="center"><img src="logo.png" alt="ShegerPay" width="200" /></p>
+
 # ShegerPay Ruby SDK
 
 [![Version](https://img.shields.io/badge/version-2.2.0-blue)](https://rubygems.org/gems/shegerpay)
