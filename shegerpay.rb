@@ -135,8 +135,13 @@ module ShegerPay
     # @return [Hash]
     def create_payment_link(title, amount, options = {})
       params = { title: title, amount: amount, currency: 'ETB' }
-      params.merge!(options.slice(:description, :enable_cbe, :enable_telebirr, :expires_in_hours))
-      request(:post, '/api/v1/payment-links', params)
+      params.merge!(options.select { |key, _| [
+        :description, :enable_cbe, :enable_telebirr, :expires_in_hours,
+        :amount_mode, :amount_options, :min_amount, :max_amount,
+        :promo_code_ids, :payment_method_layout, :allow_quantity,
+        :max_quantity, :business_name, :merchant_logo_url, :theme_color
+      ].include?(key) })
+      request_json(:post, '/api/v1/payment-links/', params)
     end
 
     # List all payment links for the account
@@ -152,6 +157,59 @@ module ShegerPay
     # @return [Hash]
     def delete_payment_link(link_id)
       request(:delete, "/api/v1/payment-links/#{link_id}")
+    end
+
+    def create_promo_code(params)
+      request_json(:post, '/api/v1/promo-codes/', promo_payload(params))
+    end
+
+    def list_promo_codes
+      request(:get, '/api/v1/promo-codes/')
+    end
+
+    def update_promo_code(code_id, params)
+      request_json(:patch, "/api/v1/promo-codes/#{code_id}", promo_payload(params))
+    end
+
+    def delete_promo_code(code_id)
+      request(:delete, "/api/v1/promo-codes/#{code_id}")
+    end
+
+    def validate_promo_code(params)
+      request_json(:post, '/api/v1/promo-codes/validate', {
+        code: params[:code],
+        amount: params[:amount],
+        link_id: params[:link_id],
+        provider: params[:provider],
+        customer_identifier: params[:customer_identifier]
+      })
+    end
+
+    def redeem_promo_code(params)
+      request_json(:post, '/api/v1/promo-codes/redeem', {
+        code: params[:code],
+        amount: params[:amount],
+        link_id: params[:link_id],
+        provider: params[:provider],
+        customer_identifier: params[:customer_identifier],
+        transaction_id: params[:transaction_id],
+        order_id: params[:order_id],
+        idempotency_key: params[:idempotency_key]
+      })
+    end
+
+    def apply_payment_link_coupon(short_code, code, options = {})
+      request_json(:post, "/api/v1/payment-links/#{short_code}/apply-coupon", {
+        code: code,
+        amount: options[:amount],
+        quantity: options[:quantity] || 1,
+        provider: options[:provider],
+        customer_identifier: options[:customer_identifier]
+      })
+    end
+
+    def get_payment_link_order_status(short_code, order_id)
+      request(:get, "/api/v1/payment-links/#{short_code}/orders/#{order_id}/status")
     end
 
     # ============================================
@@ -271,6 +329,52 @@ module ShegerPay
     end
     
     private
+
+    def promo_payload(params)
+      {
+        code: params[:code],
+        discount_type: params[:discount_type] || 'percent',
+        discount_value: params[:discount_value] || params[:discount_percent],
+        discount_percent: params[:discount_percent],
+        max_discount_amount: params[:max_discount_amount],
+        min_order_amount: params[:min_order_amount],
+        max_uses: params[:max_uses],
+        max_uses_per_customer: params[:max_uses_per_customer],
+        starts_at: params[:starts_at],
+        expires_at: params[:expires_at],
+        active: params[:active],
+        applies_to_link_ids: params[:applies_to_link_ids],
+        allowed_providers: params[:allowed_providers],
+        metadata: params[:metadata]
+      }.reject { |_, value| value.nil? }
+    end
+
+    def request_json(method, path, data = nil)
+      uri = URI.parse("#{@base_url}#{path}")
+      http = Net::HTTP.new(uri.host, uri.port)
+      http.use_ssl = uri.scheme == 'https'
+      http.open_timeout = @timeout
+      http.read_timeout = @timeout
+      request = case method
+                when :post then Net::HTTP::Post.new(uri)
+                when :patch then Net::HTTP::Patch.new(uri)
+                when :put then Net::HTTP::Put.new(uri)
+                else Net::HTTP::Post.new(uri)
+                end
+      request.body = JSON.generate(data || {})
+      request['Content-Type'] = 'application/json'
+      request['X-API-Key'] = @api_key
+      request['User-Agent'] = 'ShegerPay-Ruby-SDK/2.2.0'
+      response = http.request(request)
+      case response.code.to_i
+      when 401
+        raise AuthenticationError, 'Invalid API key'
+      when 400
+        error = JSON.parse(response.body) rescue {}
+        raise ValidationError, error['detail'] || 'Validation error'
+      end
+      JSON.parse(response.body) rescue {}
+    end
     
     def request(method, path, data = nil)
       uri = URI.parse("#{@base_url}#{path}")
