@@ -19,6 +19,7 @@ Gem::Specification.new do |spec|
 
   spec.metadata = {
     'homepage_uri' => 'https://shegerpay.com',
+    'source_code_uri' => 'https://github.com/shegerpay/sdk-ruby',
     'documentation_uri' => 'https://api.shegerpay.com/docs'
   }
 end
