@@ -4,7 +4,7 @@
 # Official Ruby SDK for ShegerPay Payment Verification Gateway
 #
 # @author ShegerPay <support@shegerpay.com>
-# @version 2.2.0
+# @version 2.2.1
 
 require 'net/http'
 require 'uri'
@@ -12,7 +12,7 @@ require 'json'
 require 'openssl'
 
 module ShegerPay
-  VERSION = '2.2.0'
+  VERSION = '2.2.1'
   
   class Error < StandardError; end
   class AuthenticationError < Error; end
@@ -93,6 +93,7 @@ module ShegerPay
     #
     # @param transaction_id [String] Bank transaction reference
     # @param amount [Float] Expected amount
+    # transaction_id may be a typed reference OR a raw scanned-QR payload (decoded server-side).
     # @return [VerificationResult]
     def quick_verify(transaction_id, amount, expected_provider = nil, sender_account = nil)
       payload = {
@@ -113,17 +114,33 @@ module ShegerPay
       request(:get, '/api/v1/history')
     end
     
-    # Verify a payment using a receipt screenshot (base64 or URL)
+    # Verify a payment from a receipt image/screenshot (or PDF).
     #
-    # @param image [String] Base64-encoded image or URL
-    # @param options [Hash] Optional parameters (provider, amount, merchant_name)
+    # Works for ANY supported bank — the backend reads the receipt's QR code
+    # (CBE, Telebirr, BOA…) or OCRs the reference and auto-detects the provider.
+    # Just pass the image; no need to know the bank or pre-extract the reference.
+    #
+    # @param screenshot [String, IO] image/PDF bytes, an IO, or a path to a file
+    # @param options [Hash] :amount, :provider, :transaction_id, :merchant_name, :sender_account
     # @return [VerificationResult]
-    def verify_image(image, options = {})
-      params = { image: image }
-      params[:provider] = options[:provider] if options[:provider]
-      params[:amount] = options[:amount] if options[:amount]
-      params[:merchant_name] = options[:merchant_name] if options[:merchant_name]
-      data = request(:post, '/api/v1/verify/image', params)
+    def verify_image(screenshot, options = {})
+      if screenshot.respond_to?(:read)
+        bytes = screenshot.read
+        filename = 'receipt'
+      elsif screenshot.is_a?(String) && screenshot.bytesize < 4096 && (File.file?(screenshot) rescue false)
+        bytes = File.binread(screenshot)
+        filename = File.basename(screenshot)
+      else
+        bytes = screenshot
+        filename = 'receipt.png'
+      end
+
+      fields = {}
+      [:amount, :provider, :transaction_id, :merchant_name, :sender_account].each do |k|
+        fields[k] = options[k] unless options[k].nil?
+      end
+
+      data = request_multipart('/api/v1/verify-image', fields, 'screenshot', filename, bytes)
       VerificationResult.new(data)
     end
 
@@ -148,7 +165,10 @@ module ShegerPay
     #
     # @return [Array]
     def list_payment_links
-      request(:get, '/api/v1/payment-links')
+      # Trailing slash is required: the FastAPI route is defined as
+      # GET /api/v1/payment-links/ and Net::HTTP does not follow the
+      # 307 redirect the slash-less form would return.
+      request(:get, '/api/v1/payment-links/')
     end
 
     # Delete a payment link by ID
@@ -317,15 +337,16 @@ module ShegerPay
 
     # Verify webhook signature
     #
+    # Constant-time comparison via OpenSSL.secure_compare — no Rack
+    # dependency and no timing-unsafe fallback.
+    #
     # @param payload [String] Raw request body
-    # @param signature [String] X-ShegerPay-Signature header
+    # @param signature [String] X-ShegerPay-Signature header ("sha256=<hex>")
     # @param secret [String] Your webhook secret
     # @return [Boolean]
     def self.verify_webhook_signature(payload, signature, secret)
       expected = 'sha256=' + OpenSSL::HMAC.hexdigest('SHA256', secret, payload)
-      Rack::Utils.secure_compare(expected, signature)
-    rescue
-      expected == signature
+      OpenSSL.secure_compare(expected, signature.to_s)
     end
     
     private
@@ -364,7 +385,7 @@ module ShegerPay
       request.body = JSON.generate(data || {})
       request['Content-Type'] = 'application/json'
       request['X-API-Key'] = @api_key
-      request['User-Agent'] = 'ShegerPay-Ruby-SDK/2.2.0'
+      request['User-Agent'] = "ShegerPay-Ruby-SDK/#{VERSION}"
       response = http.request(request)
       case response.code.to_i
       when 401
@@ -376,9 +397,35 @@ module ShegerPay
       JSON.parse(response.body) rescue {}
     end
     
+    def request_multipart(path, fields, file_field, filename, file_bytes)
+      uri = URI.parse("#{@base_url}#{path}")
+      http = Net::HTTP.new(uri.host, uri.port)
+      http.use_ssl = uri.scheme == 'https'
+      http.open_timeout = @timeout
+      http.read_timeout = @timeout
+
+      req = Net::HTTP::Post.new(uri)
+      req['X-API-Key'] = @api_key
+      req['User-Agent'] = "ShegerPay-Ruby-SDK/#{VERSION}"
+
+      parts = fields.map { |k, v| [k.to_s, v.to_s] }
+      parts << [file_field, file_bytes, { filename: filename, content_type: 'application/octet-stream' }]
+      req.set_form(parts, 'multipart/form-data')
+
+      response = http.request(req)
+      case response.code.to_i
+      when 401
+        raise AuthenticationError, 'Invalid API key'
+      when 400
+        error = JSON.parse(response.body) rescue {}
+        raise ValidationError, error['detail'] || 'Validation error'
+      end
+      JSON.parse(response.body) rescue {}
+    end
+
     def request(method, path, data = nil)
       uri = URI.parse("#{@base_url}#{path}")
-      
+
       http = Net::HTTP.new(uri.host, uri.port)
       http.use_ssl = uri.scheme == 'https'
       http.open_timeout = @timeout
@@ -396,7 +443,7 @@ module ShegerPay
       end
       
       request['X-API-Key'] = @api_key
-      request['User-Agent'] = 'ShegerPay-Ruby-SDK/1.0'
+      request['User-Agent'] = "ShegerPay-Ruby-SDK/#{VERSION}"
       
       response = http.request(request)
       

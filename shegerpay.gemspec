@@ -1,19 +1,24 @@
+# frozen_string_literal: true
+
 Gem::Specification.new do |spec|
-  spec.name          = "shegerpay"
-  spec.version       = "2.2.0"
-  spec.authors       = ["ShegerPay"]
-  spec.email         = ["developers@shegerpay.com"]
+  spec.name        = 'shegerpay'
+  spec.version     = '2.2.1'
+  spec.authors     = ['ShegerPay']
+  spec.email       = ['support@shegerpay.com']
 
-  spec.summary       = "Official Ruby SDK for ShegerPay — Ethiopian payment verification"
-  spec.description   = "Ruby client library for the ShegerPay payment verification API."
-  spec.homepage      = "https://shegerpay.com"
-  spec.license       = "MIT"
+  spec.summary     = 'Official Ruby SDK for the ShegerPay Payment Verification Gateway'
+  spec.description = 'Verify Ethiopian bank and mobile-money payments (CBE, Telebirr, BOA and more), ' \
+                     'manage payment links, promo codes, refunds and webhooks through the ShegerPay API.'
+  spec.homepage    = 'https://shegerpay.com'
+  spec.license     = 'MIT'
 
-  spec.required_ruby_version = ">= 2.7.0"
+  spec.files         = ['shegerpay.rb']
+  spec.require_paths = ['.']
 
-  spec.files         = Dir["lib/**/*", "README.md", "LICENSE"]
-  spec.require_paths = ["lib"]
+  spec.required_ruby_version = '>= 3.0'
 
-  spec.add_dependency "net-http", ">= 0.1"
-  spec.add_dependency "json", ">= 2.0"
+  spec.metadata = {
+    'homepage_uri' => 'https://shegerpay.com',
+    'documentation_uri' => 'https://api.shegerpay.com/docs'
+  }
 end
